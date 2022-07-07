@@ -137,6 +137,44 @@ final class FdServer extends EventEmitter implements ServerInterface
             );
         }
 
+        // initialize FFI for `dup()` and `close()` function
+        /** @var ?\FFI $ffi */
+        $ffi = null;
+        if (\class_exists('FFI') && \DIRECTORY_SEPARATOR !== '\\') {
+            try {
+                $ffi = \FFI::cdef('int dup(int fd);int close(int fd);');
+            } catch (\FFI\Exception $e) { // @codeCoverageIgnore
+                // unlikely: ignore if standard libc functions `dup()` or `close()` can not be found
+            }
+        }
+
+        // ensure `new FdServer(fd)` listens on given FD instead of duplicate FD if FFI is available (PHP 7.4+)
+        if ($ffi instanceof \FFI) {
+            // close temporary socket and call `dup(fd)` to get temporary FD number (fd=3 => master=5 => tmp=5)
+            fclose($this->master);
+            $tmp = $ffi->dup($fd);
+            if ($tmp < 0) {
+                // unlikely: `dup(fd)` failed, but previous `fopen()` already confirmed `dup(fd)` works
+                throw new \RuntimeException('Unable to "dup(' . $fd . ')"'); // @codeCoverageIgnore
+            }
+
+            // close original FD so the next `fopen()` call will create stream on original FD because `dup(tmp) = fd`
+            $ret = $ffi->close($fd);
+            if ($ret !== 0) {
+                // unlikely: `close(fd)` failed, but previous `dup(fd)` worked
+                $ffi->close($tmp); // @codeCoverageIgnore
+                throw new \RuntimeException('Unable to "close(' . $fd . ')"'); // @codeCoverageIgnore
+            }
+
+            // original FD is now closed, create new stream resource will (fd=3 => tmp=5 => master=3)
+            $this->master = \fopen('php://fd/' . $tmp, 'r+');
+            $ret = $ffi->close($tmp);
+            if ($this->master === false || $ret !== 0) {
+                // unlikely: `dup(tmp) = fd` or `close(tmp)` failed, but previous `dup(fd)` already confirmed FDs are valid
+                throw new \RuntimeException('Unable to "dup(' . $tmp . ')"'); // @codeCoverageIgnore
+            }
+        }
+
         // Assume this is a Unix domain socket (UDS) when its listening address doesn't parse as a valid URL with a port.
         // Looks like this work-around is the closest we can get because PHP doesn't expose SO_DOMAIN even with ext-sockets.
         $this->unix = \parse_url($this->getAddress(), \PHP_URL_PORT) === false;
