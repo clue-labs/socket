@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+
+jobs:
+  curl:
+    name: ${{ matrix.script }}.php (PHP ${{ matrix.php }})
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        php:
+          - 5.4
+          - 5.3
+        script:
+          - repro
+          - control
+    steps:
+      - uses: actions/checkout@v7
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+      - run: curl.exe -sSLo cacert.pem https://curl.se/ca/cacert.pem
+      - run: php ${{ matrix.script }}.php
+
+  composer:
+    name: composer install (Composer ${{ matrix.composer }}, PHP ${{ matrix.php }})
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        php:
+          - 5.4
+          - 5.3
+        composer:
+          - 2.2.31
+          - 2.2.30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer:${{ matrix.composer }}
+      - run: composer install -vvv
